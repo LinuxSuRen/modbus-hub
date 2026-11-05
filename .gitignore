@@ -1,0 +1,6 @@
+.idea/
+modbus-hub
+modbus-hub.exe
+data/
+web/node_modules/
+web/dist/

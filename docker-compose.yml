@@ -1,0 +1,14 @@
+services:
+  modbus-hub:
+    build: .
+    ports:
+      - "8080:8080"
+      # TCP JSON 行流转发端口（启用后）
+      - "9000:9000"
+    volumes:
+      - ./data:/data
+      # 串口透传（按需解开注释并改成实际设备）：
+      # - /dev/ttyUSB0:/dev/ttyUSB0
+    # devices:
+    #   - /dev/ttyUSB0:/dev/ttyUSB0
+    restart: unless-stopped
