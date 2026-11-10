@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0ea5e9"/>
+      <stop offset="1" stop-color="#0f766e"/>
+    </linearGradient>
+  </defs>
+  <!-- 圆角底板 -->
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg)"/>
+  <!-- 设备 → 中心的总线连线 -->
+  <g stroke="#e0f2fe" stroke-width="5" stroke-linecap="round" opacity="0.9">
+    <path d="M32 32 L55 55"/>
+    <path d="M96 32 L73 55"/>
+    <path d="M32 96 L55 73"/>
+    <path d="M96 96 L73 73"/>
+  </g>
+  <!-- 外围设备节点 -->
+  <g fill="#bae6fd">
+    <circle cx="27" cy="27" r="9"/>
+    <circle cx="101" cy="27" r="9"/>
+    <circle cx="27" cy="101" r="9"/>
+    <circle cx="101" cy="101" r="9"/>
+  </g>
+  <!-- 中心 hub -->
+  <circle cx="64" cy="64" r="23" fill="#f0f9ff" stroke="#38bdf8" stroke-width="4"/>
+  <!-- Modbus 的 M -->
+  <path d="M53 76 V55 L61 67 L69 55 V76" fill="none" stroke="#0f766e" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

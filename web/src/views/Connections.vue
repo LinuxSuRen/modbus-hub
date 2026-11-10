@@ -42,7 +42,16 @@
           </el-radio-group>
         </el-form-item>
         <el-form-item :label="form.mode === 'tcp' ? '地址' : '串口设备'">
-          <el-input v-model="form.addr" :placeholder="form.mode === 'tcp' ? '192.168.1.10:502' : '/dev/ttyUSB0 或 COM3'" />
+          <el-input v-if="form.mode === 'tcp'" v-model="form.addr" placeholder="192.168.1.10:502" />
+          <template v-else>
+            <el-select v-model="form.addr" filterable allow-create default-first-option
+              placeholder="选择或输入串口路径（COM8 / /dev/ttyUSB0）" style="width: 240px"
+              :loading="loadingPorts" @focus="!serialPorts.length && loadSerialPorts()">
+              <el-option v-for="p in serialPorts" :key="p.path" :value="p.path"
+                :label="p.name ? `${p.path}（${p.name}）` : p.path" />
+            </el-select>
+            <el-button size="small" style="margin-left: 8px" @click="loadSerialPorts">刷新</el-button>
+          </template>
         </el-form-item>
         <el-form-item label="从站地址">
           <el-input-number v-model="form.unitId" :min="0" :max="247" />
@@ -65,6 +74,12 @@
           </el-form-item>
           <el-form-item label="停止位">
             <el-input-number v-model="form.stopBits" :min="1" :max="2" />
+          </el-form-item>
+          <el-form-item label=" ">
+            <el-button :loading="probing" :disabled="!form.addr" @click="probeBaud">探测波特率</el-button>
+            <el-text size="small" type="info" style="margin-left: 8px">
+              逐档尝试常见波特率并验证设备应答，约需数秒；若连接已启用轮询，建议先停用再探测
+            </el-text>
           </el-form-item>
         </template>
         <el-form-item label="超时(ms)">
@@ -104,10 +119,24 @@ onMounted(load)
 function openNew() {
   form.value = emptyForm()
   dialog.value = true
+  loadSerialPorts()
 }
 function openEdit(row) {
   form.value = { ...row }
   dialog.value = true
+  loadSerialPorts()
+}
+const serialPorts = ref([])
+const loadingPorts = ref(false)
+async function loadSerialPorts() {
+  loadingPorts.value = true
+  try {
+    serialPorts.value = await api.get('/api/serial/ports')
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    loadingPorts.value = false
+  }
 }
 async function save() {
   try {
@@ -134,8 +163,26 @@ async function toggle(row, v) {
 }
 async function test(row) {
   const r = await api.post(`/api/connections/${row.id}/test`)
-  if (r.ok) ElMessage.success('连接成功')
+  if (r.ok) ElMessage.success(r.note || '连接成功')
   else ElMessage.error(`连接失败：${r.error}`)
+}
+const probing = ref(false)
+async function probeBaud() {
+  probing.value = true
+  try {
+    const r = await api.post('/api/connections/probe-baud', form.value)
+    if (r.ok) {
+      form.value.baud = r.baud
+      const note = (r.attempts || []).find((a) => a.ok)?.note || ''
+      ElMessage.success(`探测到波特率 ${r.baud}，已填入表单${note ? `（${note}）` : ''}`)
+    } else {
+      ElMessage.warning(r.error || '未探测到可用波特率')
+    }
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    probing.value = false
+  }
 }
 async function remove(row) {
   await api.del(`/api/connections/${row.id}`)

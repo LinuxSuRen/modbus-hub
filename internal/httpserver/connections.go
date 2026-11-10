@@ -1,11 +1,13 @@
 package httpserver
 
 import (
+	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/linuxsuren/modbus-hub/internal/modbus"
 	"github.com/linuxsuren/modbus-hub/internal/model"
+	"github.com/linuxsuren/modbus-hub/internal/serialport"
 )
 
 func (s *Server) listConnections(w http.ResponseWriter, r *http.Request) {
@@ -97,7 +99,8 @@ func (s *Server) deleteConnection(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// testConnection 只验证连通性：TCP 能建立连接、串口能打开即算通过。
+// testConnection 验证连通性。连接正在轮询时（串口被轮询客户端独占），
+// 复用轮询客户端真发一帧读请求验证，避免二次拨号必然 Access is denied。
 func (s *Server) testConnection(w http.ResponseWriter, r *http.Request) {
 	id, err := pathID(r)
 	if err != nil {
@@ -113,11 +116,71 @@ func (s *Server) testConnection(w http.ResponseWriter, r *http.Request) {
 	if timeout <= 0 {
 		timeout = time.Second
 	}
+	ran, rerr := s.Mgr.RunOp(c.ID, func(cl modbus.Client) error {
+		_, e := cl.ReadHoldingRegisters(0, 1)
+		return e
+	}, timeout+2*time.Second)
+	if ran {
+		hit, note := modbus.ClassifyProbeErr(rerr)
+		if hit {
+			writeJSON(w, map[string]interface{}{"ok": true, "note": "串口正被本连接轮询占用，已复用轮询连接验证：" + note})
+			return
+		}
+		errMsg := "复用轮询连接测试失败"
+		if rerr != nil {
+			errMsg += "：" + rerr.Error()
+		}
+		writeJSON(w, map[string]interface{}{"ok": false, "error": errMsg})
+		return
+	}
 	if err := modbus.TestDial(c, timeout); err != nil {
 		writeJSON(w, map[string]interface{}{"ok": false, "error": err.Error()})
 		return
 	}
 	writeJSON(w, map[string]interface{}{"ok": true})
+}
+
+// serialPorts 列出系统串口（含设备描述），供前端下拉选择。
+func (s *Server) serialPorts(w http.ResponseWriter, r *http.Request) {
+	ports, err := serialport.List()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err)
+		return
+	}
+	writeJSON(w, ports)
+}
+
+// probeBaud 按请求体提交的连接配置（无需先保存）探测串口设备波特率。
+func (s *Server) probeBaud(w http.ResponseWriter, r *http.Request) {
+	var c model.Connection
+	if err := decodeBody(r, &c); err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if c.Mode != "rtu" {
+		writeErr(w, http.StatusBadRequest, errStr("波特率探测仅支持串口 RTU 连接"))
+		return
+	}
+	if c.Addr == "" {
+		writeErr(w, http.StatusBadRequest, errStr("串口设备路径不能为空"))
+		return
+	}
+	// 复用连接校验补全串口参数默认值（数据位/停止位/校验）
+	_ = validateConnection(&c)
+	res, err := modbus.ProbeBaud(c, time.Duration(c.TimeoutMs)*time.Millisecond)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err)
+		return
+	}
+	if !res.OK {
+		writeJSON(w, map[string]interface{}{
+			"ok":        false,
+			"attempts":  res.Attempts,
+			"error":     fmt.Sprintf("已尝试 %d 档波特率均无有效应答，请检查：从站地址是否正确、校验位/停止位是否匹配、485 接线（A/B 是否接反）与设备供电", len(res.Attempts)),
+		})
+		return
+	}
+	writeJSON(w, res)
 }
 
 func validateConnection(c *model.Connection) error {

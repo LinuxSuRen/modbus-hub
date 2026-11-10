@@ -128,6 +128,10 @@ func validatePoint(p *model.Point) error {
 	if p.PollMs <= 0 {
 		p.PollMs = 1000
 	}
+	// 倍率缺省为 0 会把一切读数变成 0（常见于 API 建点漏传 scale），兜底为 1
+	if p.Scale == 0 {
+		p.Scale = 1
+	}
 	return nil
 }
 

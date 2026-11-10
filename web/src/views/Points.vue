@@ -22,6 +22,22 @@
         <template #default="{ row }">×{{ row.scale }} +{{ row.offset }}</template>
       </el-table-column>
       <el-table-column prop="unit" label="单位" width="70" />
+      <el-table-column label="实时值" min-width="150">
+        <template #default="{ row }">
+          <template v-if="live[row.id]">
+            <el-text v-if="live[row.id].ok" type="success">
+              {{ live[row.id].value }} {{ row.unit }}
+            </el-text>
+            <el-tooltip v-else :content="live[row.id].error" placement="top">
+              <el-text type="danger">读取失败</el-text>
+            </el-tooltip>
+            <div>
+              <el-text size="small" type="info">{{ fmtTime(live[row.id].timestamp) }}</el-text>
+            </div>
+          </template>
+          <el-text v-else size="small" type="info">—</el-text>
+        </template>
+      </el-table-column>
       <el-table-column prop="pollMs" label="周期(ms)" width="90" />
       <el-table-column label="启用" width="70">
         <template #default="{ row }">
@@ -90,14 +106,22 @@
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { api, fcText, dataTypeText } from '../api'
+import { api, fcText, dataTypeText, fmtTime } from '../api'
+import { onReading } from '../events'
 
 const rows = ref([])
 const connections = ref([])
 const connFilter = ref(null)
 const dialog = ref(false)
+
+// 实时读数（SSE）：pointId -> 最新 Reading
+const live = ref({})
+const offReading = onReading((rd) => {
+  live.value = { ...live.value, [rd.pointId]: rd }
+})
+onUnmounted(offReading)
 const emptyForm = () => ({
   id: 0, name: '', connectionId: null, functionCode: 3, address: 0, quantity: 1,
   dataType: 'uint16', scale: 1, offset: 0, unit: '', pollMs: 1000, enabled: true,

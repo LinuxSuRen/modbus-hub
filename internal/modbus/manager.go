@@ -2,6 +2,7 @@ package modbus
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync"
 	"time"
@@ -33,6 +34,17 @@ type Manager struct {
 	subsMu sync.RWMutex
 	subs   map[int]func(model.Reading)
 	subSeq int
+
+	// ops：连接轮询循环持有的客户端的复用通道。串口（尤其 Windows）被轮询
+	// 独占后，测试/立即读/手动写必须复用同一客户端串行执行，而不是二次拨号。
+	opsMu sync.Mutex
+	ops   map[uint]chan opRequest
+}
+
+// opRequest 一次在轮询客户端上串行执行的操作。
+type opRequest struct {
+	fn   func(Client) error
+	resp chan error
 }
 
 type connRoutine struct {
@@ -48,6 +60,34 @@ func NewManager(db *gorm.DB) *Manager {
 		status:  make(map[uint]*ConnStatus),
 		latest:  make(map[uint]model.Reading),
 		subs:    make(map[int]func(model.Reading)),
+		ops:     make(map[uint]chan opRequest),
+	}
+}
+
+// RunOp 在连接轮询循环持有的客户端上串行执行 fn。
+// 连接未在轮询时返回 ran=false（调用方自行临时拨号）；
+// 轮询退避重连中可能超时，返回明确的 ran=true + 错误。
+func (m *Manager) RunOp(connectionID uint, fn func(Client) error, timeout time.Duration) (ran bool, err error) {
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	m.opsMu.Lock()
+	ch, ok := m.ops[connectionID]
+	m.opsMu.Unlock()
+	if !ok {
+		return false, nil
+	}
+	req := opRequest{fn: fn, resp: make(chan error, 1)}
+	select {
+	case ch <- req:
+	case <-time.After(timeout):
+		return true, fmt.Errorf("连接正在退避重连，暂不能执行手动操作，请稍后再试")
+	}
+	select {
+	case e := <-req.resp:
+		return true, e
+	case <-time.After(timeout):
+		return true, fmt.Errorf("等待操作结果超时（连接可能正在重连）")
 	}
 }
 
@@ -165,7 +205,15 @@ func (m *Manager) pollLoop(ctx context.Context, done chan struct{}, cfg model.Co
 	}
 	var dues []due
 	var client *closerClient
+	// 注册手动操作通道：测试/立即读/手动写复用本客户端（串口独占时的唯一通路）
+	opsCh := make(chan opRequest, 4)
+	m.opsMu.Lock()
+	m.ops[cfg.ID] = opsCh
+	m.opsMu.Unlock()
 	defer func() {
+		m.opsMu.Lock()
+		delete(m.ops, cfg.ID)
+		m.opsMu.Unlock()
 		if client != nil {
 			_ = client.Close()
 		}
@@ -249,6 +297,17 @@ func (m *Manager) pollLoop(ctx context.Context, done chan struct{}, cfg model.Co
 		select {
 		case <-ctx.Done():
 			return
+		case op := <-opsCh:
+			// 与轮询共用同一客户端串行执行；连接级错误同样触发客户端重建
+			var opErr error
+			if opErr = ensureClient(); opErr == nil {
+				opErr = op.fn(client)
+				if opErr != nil {
+					_ = client.Close()
+					client = nil
+				}
+			}
+			op.resp <- opErr
 		case now := <-tick.C:
 			if now.Sub(lastLoad) > 3*time.Second {
 				loadPoints()
@@ -313,6 +372,7 @@ func isConnErr(err error) bool {
 }
 
 // ReadNow 立即强制读一次指定点位（管理台手动触发）。
+// 连接正在轮询时复用轮询客户端（串口独占下二次拨号必然失败），否则临时拨号。
 func (m *Manager) ReadNow(pointID uint) (model.Reading, error) {
 	var p model.Point
 	if err := m.db.First(&p, pointID).Error; err != nil {
@@ -322,7 +382,16 @@ func (m *Manager) ReadNow(pointID uint) (model.Reading, error) {
 	if err := m.db.First(&cfg, p.ConnectionID).Error; err != nil {
 		return model.Reading{}, err
 	}
-	r, err := m.readWithFreshClient(cfg, p)
+	timeout := opTimeout(cfg)
+	var r model.Reading
+	ran, err := m.RunOp(cfg.ID, func(c Client) error {
+		var e error
+		r, e = readOnClient(c, p, cfg)
+		return e
+	}, timeout)
+	if !ran {
+		r, err = m.readWithFreshClient(cfg, p)
+	}
 	m.latestMu.Lock()
 	m.latest[r.PointID] = r
 	m.latestMu.Unlock()
@@ -330,23 +399,26 @@ func (m *Manager) ReadNow(pointID uint) (model.Reading, error) {
 	return r, err
 }
 
-// readWithFreshClient 建临时连接读一次（避开轮询循环的串行独占，简单直接）。
-func (m *Manager) readWithFreshClient(cfg model.Connection, p model.Point) (model.Reading, error) {
-	timeout := time.Duration(cfg.TimeoutMs) * time.Millisecond
-	if timeout <= 0 {
-		timeout = time.Second
+// opTimeout 手动操作等待上限：连接超时加裕量，至少 3 秒。
+func opTimeout(cfg model.Connection) time.Duration {
+	t := time.Duration(cfg.TimeoutMs) * time.Millisecond
+	if t <= 0 {
+		t = time.Second
 	}
+	if d := t + 2*time.Second; d > 3*time.Second {
+		return d
+	}
+	return 3 * time.Second
+}
+
+// readOnClient 在给定客户端上读一个点位并解码。
+func readOnClient(c Client, p model.Point, cfg model.Connection) (model.Reading, error) {
 	r := model.Reading{
 		PointID: p.ID, PointName: p.Name, Connection: cfg.Name,
 		Unit: p.Unit, Timestamp: time.Now(),
 	}
-	c, err := dial(cfg, timeout)
-	if err != nil {
-		r.Error = err.Error()
-		return r, err
-	}
-	defer c.Close()
 	var data []byte
+	var err error
 	switch p.FunctionCode {
 	case 1:
 		data, err = c.ReadCoils(p.Address, p.Quantity)
@@ -372,10 +444,48 @@ func (m *Manager) readWithFreshClient(cfg model.Connection, p model.Point) (mode
 	return r, nil
 }
 
+// readWithFreshClient 建临时连接读一次（连接未在轮询时使用）。
+func (m *Manager) readWithFreshClient(cfg model.Connection, p model.Point) (model.Reading, error) {
+	timeout := time.Duration(cfg.TimeoutMs) * time.Millisecond
+	if timeout <= 0 {
+		timeout = time.Second
+	}
+	c, err := dial(cfg, timeout)
+	if err != nil {
+		r := model.Reading{
+			PointID: p.ID, PointName: p.Name, Connection: cfg.Name,
+			Unit: p.Unit, Timestamp: time.Now(), Error: err.Error(),
+		}
+		return r, err
+	}
+	defer c.Close()
+	return readOnClient(c, p, cfg)
+}
+
 // Write 手动写值：functionCode 5 写线圈（bool），6 写单寄存器（uint16）。
+// 连接正在轮询时复用轮询客户端串行执行。
 func (m *Manager) Write(connectionID uint, functionCode int, address uint16, value float64) error {
 	var cfg model.Connection
 	if err := m.db.First(&cfg, connectionID).Error; err != nil {
+		return err
+	}
+	writeFn := func(c Client) error {
+		switch functionCode {
+		case 5:
+			_, err := c.WriteSingleCoil(address, value != 0)
+			return err
+		case 6:
+			if value < 0 || value > 65535 {
+				return &writeRangeError{}
+			}
+			_, err := c.WriteSingleRegister(address, uint16(value))
+			return err
+		default:
+			return &fcError{}
+		}
+	}
+	ran, err := m.RunOp(connectionID, writeFn, opTimeout(cfg))
+	if ran {
 		return err
 	}
 	timeout := time.Duration(cfg.TimeoutMs) * time.Millisecond
@@ -387,18 +497,7 @@ func (m *Manager) Write(connectionID uint, functionCode int, address uint16, val
 		return err
 	}
 	defer c.Close()
-	switch functionCode {
-	case 5:
-		_, err = c.WriteSingleCoil(address, value != 0)
-	case 6:
-		if value < 0 || value > 65535 {
-			return &writeRangeError{}
-		}
-		_, err = c.WriteSingleRegister(address, uint16(value))
-	default:
-		return &fcError{}
-	}
-	return err
+	return writeFn(c)
 }
 
 type writeRangeError struct{}

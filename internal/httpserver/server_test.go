@@ -1,14 +1,18 @@
 package httpserver
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/linuxsuren/modbus-hub/internal/modbus"
 	"github.com/linuxsuren/modbus-hub/internal/store"
@@ -129,6 +133,115 @@ func TestConnectionCRUD(t *testing.T) {
 	}
 }
 
+func TestProbeBaudEndpoint(t *testing.T) {
+	_, ts := newTestServer(t)
+
+	// tcp 模式应被拒绝
+	resp, out := doJSON(t, "POST", ts.URL+"/api/connections/probe-baud", map[string]interface{}{
+		"name": "c1", "mode": "tcp", "addr": "127.0.0.1:502",
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("tcp mode should 400, got %v %v", resp.StatusCode, out)
+	}
+
+	// 串口路径为空应被拒绝
+	resp, out = doJSON(t, "POST", ts.URL+"/api/connections/probe-baud", map[string]interface{}{
+		"name": "c1", "mode": "rtu", "addr": "",
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("empty addr should 400, got %v %v", resp.StatusCode, out)
+	}
+
+	// 不存在的串口：打开失败应 400 并带错误说明
+	resp, out = doJSON(t, "POST", ts.URL+"/api/connections/probe-baud", map[string]interface{}{
+		"name": "c1", "mode": "rtu", "addr": "/dev/definitely-not-exist-tty",
+		"unitId": 1, "timeoutMs": 300,
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad port should 400, got %v %v", resp.StatusCode, out)
+	}
+	if out["error"] == "" {
+		t.Fatalf("want error message, got %v", out)
+	}
+}
+
+func TestSerialPortsEndpoint(t *testing.T) {
+	_, ts := newTestServer(t)
+	resp, data := doRaw(t, "GET", ts.URL+"/api/serial/ports", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("serial ports: %v", resp.StatusCode)
+	}
+	var ports []map[string]interface{}
+	if err := json.Unmarshal(data, &ports); err != nil {
+		t.Fatalf("decode: %v (%s)", err, data)
+	}
+	seen := map[string]bool{}
+	for _, p := range ports {
+		path := p["path"].(string)
+		if path == "" || seen[path] {
+			t.Fatalf("非法或重复串口: %v", ports)
+		}
+		seen[path] = true
+	}
+}
+
+func TestSSEEventsStream(t *testing.T) {
+	_, ts := newTestServer(t)
+
+	// 建一个不可达 TCP 连接 + 点位：手动读会产生一条错误读数事件（无需真实设备）
+	_, out := doJSON(t, "POST", ts.URL+"/api/connections", map[string]interface{}{
+		"name": "sse-c", "mode": "tcp", "addr": "127.0.0.1:1", "enabled": false,
+	})
+	cid := int(out["id"].(float64))
+	_, out = doJSON(t, "POST", ts.URL+"/api/points", map[string]interface{}{
+		"connectionId": cid, "name": "sse-p", "functionCode": 3,
+		"address": 0, "quantity": 1, "dataType": "uint16", "pollMs": 1000,
+	})
+	pid := int(out["id"].(float64))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, "GET", ts.URL+"/api/events", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("Content-Type: %v", ct)
+	}
+	if resp.Header.Get("X-Accel-Buffering") != "no" {
+		t.Fatal("缺少 X-Accel-Buffering: no")
+	}
+
+	// 稍后触发一次手动读 → SSE 应收到 reading 事件
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_, _ = doJSON(t, "POST", fmt.Sprintf("%s/api/points/%d/read", ts.URL, pid), nil)
+	}()
+
+	br := bufio.NewReader(resp.Body)
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil {
+			t.Fatalf("读 SSE 流: %v", err)
+		}
+		if strings.HasPrefix(line, "event: reading") {
+			dataLine, err := br.ReadString('\n')
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(dataLine, `"pointId"`) || !strings.Contains(dataLine, `"pointName":"sse-p"`) {
+				t.Fatalf("reading 事件数据异常: %v", dataLine)
+			}
+			return
+		}
+	}
+}
+
 func TestPointValidation(t *testing.T) {
 	_, ts := newTestServer(t)
 	_, out := doJSON(t, "POST", ts.URL+"/api/connections", map[string]interface{}{
@@ -159,6 +272,18 @@ func TestPointValidation(t *testing.T) {
 	})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("float32 with quantity=1 should 400, got %v", resp.StatusCode)
+	}
+
+	// API 建点漏传 scale 时应兜底为 1，否则读数恒为 0
+	resp, out = doJSON(t, "POST", ts.URL+"/api/points", map[string]interface{}{
+		"connectionId": cid, "name": "p4", "functionCode": 3,
+		"address": 0, "quantity": 1, "dataType": "uint16", "pollMs": 500,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create without scale: %v", resp.StatusCode)
+	}
+	if out["scale"].(float64) != 1 {
+		t.Fatalf("scale should default to 1, got %v", out["scale"])
 	}
 }
 

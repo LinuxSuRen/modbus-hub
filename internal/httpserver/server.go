@@ -95,6 +95,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/connections/{id}", s.updateConnection)
 	mux.HandleFunc("DELETE /api/connections/{id}", s.deleteConnection)
 	mux.HandleFunc("POST /api/connections/{id}/test", s.testConnection)
+	mux.HandleFunc("POST /api/connections/probe-baud", s.probeBaud)
+	mux.HandleFunc("GET /api/serial/ports", s.serialPorts)
 
 	// 点位
 	mux.HandleFunc("GET /api/points", s.listPoints)
@@ -105,6 +107,7 @@ func (s *Server) Handler() http.Handler {
 
 	// 实时值 / 手动写
 	mux.HandleFunc("GET /api/values", s.values)
+	mux.HandleFunc("GET /api/events", s.events)
 	mux.HandleFunc("POST /api/write", s.write)
 
 	// 转发配置
