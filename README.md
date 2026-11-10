@@ -44,6 +44,17 @@ docker run -d -p 8080:8080 -p 9000:9000 \
   ghcr.io/linuxsuren/modbus-hub:latest
 ```
 
+## 发布
+
+打 tag 即自动发布（[release.yml](.github/workflows/release.yml)）：
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+- **GitHub Release**：goreleaser 构建 linux/windows/darwin × amd64/arm64 二进制（tar.gz/zip + checksums），版本号注入 `-version`
+- **容器镜像**：buildx 多架构（linux/amd64、linux/arm64）推送 GHCR `ghcr.io/<owner>/modbus-hub:<版本>` 与 `:latest`，树莓派可直接用 arm64 镜像
+
 ## 使用流程
 
 1. **连接管理** → 新建连接（TCP 填 `ip:502`；USB 填串口设备路径），点「测试」验证可达

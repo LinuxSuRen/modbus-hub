@@ -1,0 +1,45 @@
+# goreleaser v2 配置：多平台二进制发布到 GitHub Release。
+# 镜像发布走 .github/workflows/release.yml 的 buildx 任务（多架构更稳）。
+version: 2
+
+project_name: modbus-hub
+
+# 注意：前端（web/dist）由 CI 在 goreleaser 之前构建（go:embed 需要它）；
+# 本地验证请先 make web 再跑 goreleaser。
+
+builds:
+  - env: [CGO_ENABLED=0]
+    goos: [linux, windows, darwin]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w -X github.com/linuxsuren/modbus-hub/internal/version.Version={{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}_v{{ .Version }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [README.md, LICENSE]
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+changelog:
+  use: git
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^chore:"
+      - "^ci:"
+      - "^test:"
+      - Merge pull request
+      - Merge branch
+
+release:
+  draft: false
+  prerelease: auto
+  mode: keep-existing

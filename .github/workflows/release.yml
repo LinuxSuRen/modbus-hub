@@ -1,0 +1,79 @@
+name: release
+
+# 打 tag（v*）即发布：goreleaser 出多平台二进制挂 GitHub Release，buildx 出多架构镜像推 GHCR
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # GitHub Release
+  packages: write # GHCR 推镜像
+
+jobs:
+  binaries:
+    name: 二进制 Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # goreleaser changelog 需要完整历史
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build web # go:embed web/dist，goreleaser 前置步骤
+        working-directory: web
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    name: 容器镜像 GHCR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # GHCR 要求全小写；LinuxSuRen 这类大写 owner 需转换
+      - name: 计算小写镜像名
+        id: image
+        run: |
+          owner="$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')"
+          version="${GITHUB_REF_NAME#v}"
+          echo "name=ghcr.io/${owner}/modbus-hub" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 构建并推送多架构镜像
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ steps.image.outputs.version }}
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ steps.image.outputs.version }}
+            ${{ steps.image.outputs.name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
