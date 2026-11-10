@@ -7,7 +7,8 @@ COPY web/ ./
 RUN npm run build
 
 # 后端构建（固定构建平台 + GOARCH 交叉编译，arm64 无需模拟）
-FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS build
+# go 指令版本需与 go.mod 一致（GOTOOLCHAIN=local 不会自动下载新工具链）
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS build
 ARG TARGETARCH
 ARG VERSION=dev
 WORKDIR /src

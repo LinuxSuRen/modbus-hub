@@ -18,7 +18,7 @@ jobs:
       - name: Build web
         working-directory: web
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build
       - run: go vet ./...
       - run: go test ./...

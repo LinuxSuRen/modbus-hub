@@ -30,7 +30,7 @@ jobs:
       - name: Build web # go:embed web/dist，goreleaser 前置步骤
         working-directory: web
         run: |
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund # ci 严格按 lock 安装，不会改写 package-lock.json（否则 goreleaser 报 dirty）
           npm run build
 
       - name: Run goreleaser
