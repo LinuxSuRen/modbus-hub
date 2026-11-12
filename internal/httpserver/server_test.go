@@ -285,6 +285,36 @@ func TestPointValidation(t *testing.T) {
 	if out["scale"].(float64) != 1 {
 		t.Fatalf("scale should default to 1, got %v", out["scale"])
 	}
+
+	// 小数位：缺省 0（不处理），合法范围 0..9，越界应被拒
+	if out["precision"].(float64) != 0 {
+		t.Fatalf("precision should default to 0, got %v", out["precision"])
+	}
+	resp, out = doJSON(t, "POST", ts.URL+"/api/points", map[string]interface{}{
+		"connectionId": cid, "name": "p5", "functionCode": 3,
+		"address": 0, "quantity": 1, "dataType": "uint16", "pollMs": 500, "precision": 2,
+	})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create with precision=2: %v %v", resp.StatusCode, out)
+	}
+	if out["precision"].(float64) != 2 {
+		t.Fatalf("precision should persist 2, got %v", out["precision"])
+	}
+	pid := int(out["id"].(float64))
+	resp, out = doJSON(t, "PUT", ts.URL+fmt.Sprintf("/api/points/%d", pid), map[string]interface{}{
+		"connectionId": cid, "name": "p5", "functionCode": 3,
+		"address": 0, "quantity": 1, "dataType": "uint16", "pollMs": 500, "precision": -1,
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("precision=-1 should 400, got %v", resp.StatusCode)
+	}
+	resp, _ = doJSON(t, "POST", ts.URL+"/api/points", map[string]interface{}{
+		"connectionId": cid, "name": "p6", "functionCode": 3,
+		"address": 0, "quantity": 1, "dataType": "uint16", "pollMs": 500, "precision": 10,
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("precision=10 should 400, got %v", resp.StatusCode)
+	}
 }
 
 func TestSinkTCPConfig(t *testing.T) {
