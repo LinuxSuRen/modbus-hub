@@ -284,7 +284,7 @@ func (m *Manager) pollLoop(ctx context.Context, done chan struct{}, cfg model.Co
 			r.Error = err.Error()
 			return r, err
 		}
-		v, derr := decode(data, p.DataType, p.Scale, p.Offset)
+		v, derr := decode(data, p.DataType, p.Scale, p.Offset, p.Precision)
 		if derr != nil {
 			r.Error = derr.Error()
 			return r, derr
@@ -435,7 +435,7 @@ func readOnClient(c Client, p model.Point, cfg model.Connection) (model.Reading,
 		r.Error = err.Error()
 		return r, err
 	}
-	v, derr := decode(data, p.DataType, p.Scale, p.Offset)
+	v, derr := decode(data, p.DataType, p.Scale, p.Offset, p.Precision)
 	if derr != nil {
 		r.Error = derr.Error()
 		return r, derr
