@@ -18,8 +18,10 @@
       <el-table-column label="类型" width="110">
         <template #default="{ row }">{{ dataTypeText[row.dataType] || row.dataType }}</template>
       </el-table-column>
-      <el-table-column label="变换" width="120">
-        <template #default="{ row }">×{{ row.scale }} +{{ row.offset }}</template>
+      <el-table-column label="变换" width="150">
+        <template #default="{ row }">
+          ×{{ row.scale }} +{{ row.offset }}<template v-if="row.precision">（{{ row.precision }} 位小数）</template>
+        </template>
       </el-table-column>
       <el-table-column prop="unit" label="单位" width="70" />
       <el-table-column label="实时值" min-width="150">
@@ -87,6 +89,10 @@
         <el-form-item label="偏移">
           <el-input-number v-model="form.offset" :step="1" />
         </el-form-item>
+        <el-form-item label="小数位">
+          <el-input-number v-model="form.precision" :min="0" :max="9" />
+          <el-text size="small" type="info" style="margin-left: 8px">0 = 不处理</el-text>
+        </el-form-item>
         <el-form-item label="单位">
           <el-input v-model="form.unit" placeholder="℃ / kPa / ..." style="width: 120px" />
         </el-form-item>
@@ -124,7 +130,7 @@ const offReading = onReading((rd) => {
 onUnmounted(offReading)
 const emptyForm = () => ({
   id: 0, name: '', connectionId: null, functionCode: 3, address: 0, quantity: 1,
-  dataType: 'uint16', scale: 1, offset: 0, unit: '', pollMs: 1000, enabled: true,
+  dataType: 'uint16', scale: 1, offset: 0, precision: 0, unit: '', pollMs: 1000, enabled: true,
 })
 const form = ref(emptyForm())
 

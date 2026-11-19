@@ -67,7 +67,7 @@ func (s *Server) updatePoint(w http.ResponseWriter, r *http.Request) {
 	if err := s.DB.Model(&p).Updates(map[string]interface{}{
 		"connection_id": in.ConnectionID, "name": in.Name, "function_code": in.FunctionCode,
 		"address": in.Address, "quantity": in.Quantity, "data_type": in.DataType,
-		"scale": in.Scale, "offset": in.Offset, "unit": in.Unit,
+		"scale": in.Scale, "offset": in.Offset, "precision": in.Precision, "unit": in.Unit,
 		"poll_ms": in.PollMs, "enabled": in.Enabled,
 	}).Error; err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
@@ -131,6 +131,9 @@ func validatePoint(p *model.Point) error {
 	// 倍率缺省为 0 会把一切读数变成 0（常见于 API 建点漏传 scale），兜底为 1
 	if p.Scale == 0 {
 		p.Scale = 1
+	}
+	if p.Precision < 0 || p.Precision > 9 {
+		return errStr("小数位须在 0..9（0 表示不处理）")
 	}
 	return nil
 }

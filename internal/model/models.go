@@ -28,6 +28,7 @@ type Point struct {
 	DataType     string `gorm:"size:16;not null" json:"dataType"` // uint16 int16 uint32 int32 float32 float32sw bool raw
 	Scale        float64 `json:"scale"`
 	Offset       float64 `json:"offset"`
+	Precision    int    `json:"precision"` // 小数位：0 不处理；>0 四舍五入保留 n 位（消除 3×0.1=0.30000000000000004 之类的浮点噪声）
 	Unit         string `gorm:"size:16" json:"unit"`
 	PollMs       int    `gorm:"not null" json:"pollMs"`
 	Enabled      bool   `json:"enabled"`
