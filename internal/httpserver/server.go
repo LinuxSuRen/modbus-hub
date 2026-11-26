@@ -98,6 +98,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/connections/probe-baud", s.probeBaud)
 	mux.HandleFunc("GET /api/serial/ports", s.serialPorts)
 
+	// BLE 透传：设备扫描与模块 AT 设置
+	mux.HandleFunc("GET /api/ble/scan", s.bleScan)
+	mux.HandleFunc("POST /api/ble/at", s.bleAT)
+
 	// 点位
 	mux.HandleFunc("GET /api/points", s.listPoints)
 	mux.HandleFunc("POST /api/points", s.createPoint)

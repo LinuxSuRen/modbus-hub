@@ -67,7 +67,7 @@ func (s *Server) updateConnection(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in.ID = c.ID
-	if err := validateConnection(&in); err != nil {
+	if err := validateUpdateConnection(&in); err != nil {
 		writeErr(w, http.StatusBadRequest, err)
 		return
 	}
@@ -75,6 +75,9 @@ func (s *Server) updateConnection(w http.ResponseWriter, r *http.Request) {
 		"name": in.Name, "mode": in.Mode, "addr": in.Addr, "unit_id": in.UnitID,
 		"baud": in.Baud, "data_bits": in.DataBits, "parity": in.Parity,
 		"stop_bits": in.StopBits, "timeout_ms": in.TimeoutMs, "enabled": in.Enabled,
+		"ble_service_uuid": in.BleServiceUUID,
+		"ble_write_uuid":   in.BleWriteUUID,
+		"ble_notify_uuid":  in.BleNotifyUUID,
 	}).Error; err != nil {
 		writeErr(w, http.StatusInternalServerError, err)
 		return
@@ -187,8 +190,8 @@ func validateConnection(c *model.Connection) error {
 	if c.Name == "" {
 		return errStr("名称不能为空")
 	}
-	if c.Mode != "tcp" && c.Mode != "rtu" {
-		return errStr("模式仅支持 tcp 或 rtu")
+	if c.Mode != "tcp" && c.Mode != "rtu" && c.Mode != "ble" {
+		return errStr("模式仅支持 tcp、rtu 或 ble")
 	}
 	if c.Addr == "" {
 		return errStr("地址不能为空")
@@ -209,6 +212,25 @@ func validateConnection(c *model.Connection) error {
 	}
 	if c.TimeoutMs <= 0 {
 		c.TimeoutMs = 1000
+	}
+	return nil
+}
+
+// validateUpdateConnection 编辑连接时的完整校验（含 BLE UUID 字段）。
+func validateUpdateConnection(c *model.Connection) error {
+	if err := validateConnection(c); err != nil {
+		return err
+	}
+	if c.Mode == "rtu" {
+		if c.DataBits <= 0 {
+			c.DataBits = 8
+		}
+		if c.StopBits <= 0 {
+			c.StopBits = 1
+		}
+		if c.Parity == "" {
+			c.Parity = "N"
+		}
 	}
 	return nil
 }

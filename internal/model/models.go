@@ -2,12 +2,12 @@ package model
 
 import "time"
 
-// Connection 一条 Modbus 连接：TCP 或 USB 串口上的 RTU。
+// Connection 一条 Modbus 连接：TCP、USB 串口 RTU 或 BLE 透传 RTU。
 type Connection struct {
 	ID       uint   `gorm:"primarykey" json:"id"`
 	Name     string `gorm:"uniqueIndex;size:64" json:"name"`
-	Mode     string `gorm:"size:8;not null" json:"mode"` // tcp | rtu
-	Addr     string `gorm:"size:128;not null" json:"addr"` // tcp: host:port；rtu: /dev/ttyUSB0 或 COM3
+	Mode     string `gorm:"size:8;not null" json:"mode"` // tcp | rtu | ble
+	Addr     string `gorm:"size:128;not null" json:"addr"` // tcp: host:port；rtu: /dev/ttyUSB0 或 COM3；ble: 设备地址
 	UnitID   uint8  `json:"unitId"`
 	Baud     int    `json:"baud"`
 	DataBits int    `json:"dataBits"`
@@ -15,6 +15,12 @@ type Connection struct {
 	StopBits int    `json:"stopBits"`
 	TimeoutMs int   `json:"timeoutMs"`
 	Enabled  bool   `json:"enabled"`
+
+	// BLE 透传（mode=ble 时生效）：服务/写/通知特征 UUID，
+	// 留空使用模块默认 FFE0/FFE1/FFE1。
+	BleServiceUUID string `gorm:"size:64" json:"bleServiceUUID"`
+	BleWriteUUID   string `gorm:"size:64" json:"bleWriteUUID"`
+	BleNotifyUUID  string `gorm:"size:64" json:"bleNotifyUUID"`
 }
 
 // Point 一个采集点位：按功能码批量读取后按数据类型解码为工程值。
