@@ -64,8 +64,7 @@ func Scan(duration time.Duration, filter string) ([]DeviceInfo, error) {
 
 	var mu sync.Mutex
 	seen := map[string]DeviceInfo{}
-	done := make(chan struct{})
-	err = a.Scan(func(_ *bluetooth.Adapter, r bluetooth.ScanResult) {
+	cb := func(_ *bluetooth.Adapter, r bluetooth.ScanResult) {
 		mu.Lock()
 		defer mu.Unlock()
 		addr := r.Address.String()
@@ -82,14 +81,25 @@ func Scan(duration time.Duration, filter string) ([]DeviceInfo, error) {
 			}
 			seen[addr] = d
 		}
-	})
-	if err != nil {
-		return nil, fmt.Errorf("启动 BLE 扫描失败: %w", err)
 	}
+
+	// Adapter.Scan 会阻塞直到 StopScan 被调用（各平台一致），
+	// 因此放到后台 goroutine 跑，到时后由主流程 StopScan 收尾。
+	scanErr := make(chan error, 1)
+	go func() { scanErr <- a.Scan(cb) }()
+
 	select {
-	case <-done:
+	case e := <-scanErr: // 扫描立刻失败（如适配器异常）
+		if e != nil {
+			return nil, fmt.Errorf("启动 BLE 扫描失败: %w", e)
+		}
 	case <-time.After(duration):
+		_ = a.StopScan() // 解除 a.Scan 的阻塞；回调与收集互斥，无需额外等待
+		if e := <-scanErr; e != nil {
+			return nil, fmt.Errorf("停止 BLE 扫描失败: %w", e)
+		}
 	}
+
 	mu.Lock()
 	list := make([]DeviceInfo, 0, len(seen))
 	for _, d := range seen {
