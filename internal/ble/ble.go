@@ -205,8 +205,10 @@ func Dial(addr, service, write, notify string, connectTimeout time.Duration) (*L
 	var dev bluetooth.Device
 	connected := make(chan error, 1)
 	go func() {
+		// Address 结构随平台而异：Linux 内嵌 MACAddress，macOS 则为 UUID；
+		// 两者的公共入口都是 Set(string)，此处按平台各自解析。
 		var address bluetooth.Address
-		address.MACAddress.Set(addr)
+		address.Set(addr)
 		d, e := a.Connect(address, bluetooth.ConnectionParams{})
 		if e != nil {
 			connected <- e
