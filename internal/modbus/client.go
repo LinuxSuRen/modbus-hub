@@ -73,8 +73,10 @@ func dial(cfg model.Connection, timeout time.Duration) (*closerClient, error) {
 			return nil, fmt.Errorf("modbus rtu 打开串口 %s: %w", cfg.Addr, err)
 		}
 		return &closerClient{Client: gx.NewClient(h), ctx: context.Background(), close: h.Close}, nil
+	case "ble":
+		return dialBLE(cfg, timeout)
 	default:
-		return nil, fmt.Errorf("未知连接模式 %q（仅支持 tcp/rtu）", cfg.Mode)
+		return nil, fmt.Errorf("未知连接模式 %q（仅支持 tcp/rtu/ble）", cfg.Mode)
 	}
 }
 
