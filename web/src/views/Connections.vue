@@ -39,10 +39,19 @@
           <el-radio-group v-model="form.mode">
             <el-radio value="tcp">Modbus TCP</el-radio>
             <el-radio value="rtu">串口 RTU</el-radio>
+            <el-radio value="ble">BLE 透传</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item :label="form.mode === 'tcp' ? '地址' : '串口设备'">
+        <el-form-item :label="form.mode === 'tcp' ? '地址' : form.mode === 'ble' ? 'BLE 设备' : '串口设备'">
           <el-input v-if="form.mode === 'tcp'" v-model="form.addr" placeholder="192.168.1.10:502" />
+          <template v-else-if="form.mode === 'ble'">
+            <el-select v-model="form.addr" filterable allow-create default-first-option
+              placeholder="选择扫描到的设备或输入地址（AA:BB:CC:DD:EE:FF）" style="width: 240px">
+              <el-option v-for="d in bleDevices" :key="d.address" :value="d.address"
+                :label="d.name ? `${d.address}（${d.name}，${d.rssi}dBm）` : d.address" />
+            </el-select>
+            <el-button size="small" :loading="scanning" style="margin-left: 8px" @click="scanBle">扫描</el-button>
+          </template>
           <template v-else>
             <el-select v-model="form.addr" filterable allow-create default-first-option
               placeholder="选择或输入串口路径（COM8 / /dev/ttyUSB0）" style="width: 240px"
@@ -56,7 +65,23 @@
         <el-form-item label="从站地址">
           <el-input-number v-model="form.unitId" :min="0" :max="247" />
         </el-form-item>
-        <template v-if="form.mode === 'rtu'">
+        <template v-if="form.mode === 'ble'">
+          <el-form-item label="服务 UUID">
+            <el-input v-model="form.bleServiceUUID" placeholder="默认 FFE0" style="width: 220px" />
+          </el-form-item>
+          <el-form-item label="写 UUID">
+            <el-input v-model="form.bleWriteUUID" placeholder="默认 FFE1" style="width: 220px" />
+          </el-form-item>
+          <el-form-item label="通知 UUID">
+            <el-input v-model="form.bleNotifyUUID" placeholder="默认 FFE1" style="width: 220px" />
+          </el-form-item>
+          <el-form-item label=" ">
+            <el-text size="small" type="info">
+              BLE 透传有连接延迟，建议超时 ≥ 1500ms、轮询间隔放宽；UUID 留空使用模块默认值
+            </el-text>
+          </el-form-item>
+        </template>
+        <template v-else-if="form.mode === 'rtu'">
           <el-form-item label="波特率">
             <el-select v-model="form.baud" style="width: 140px">
               <el-option v-for="b in [1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200]" :key="b" :label="String(b)" :value="b" />
@@ -108,8 +133,23 @@ const dialog = ref(false)
 const emptyForm = () => ({
   id: 0, name: '', mode: 'tcp', addr: '', unitId: 1,
   baud: 9600, dataBits: 8, parity: 'N', stopBits: 1, timeoutMs: 1000, enabled: true,
+  bleServiceUUID: '', bleWriteUUID: '', bleNotifyUUID: '',
 })
 const form = ref(emptyForm())
+
+const bleDevices = ref([])
+const scanning = ref(false)
+async function scanBle() {
+  scanning.value = true
+  try {
+    bleDevices.value = await api.get('/api/ble/scan?duration=4&filter=')
+    if (!bleDevices.value.length) ElMessage.warning('未扫描到 BLE 设备，请确认模块已上电并在广播')
+  } catch (e) {
+    ElMessage.error(e.message)
+  } finally {
+    scanning.value = false
+  }
+}
 
 async function load() {
   rows.value = await api.get('/api/connections')
